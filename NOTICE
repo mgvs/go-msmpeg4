@@ -1,0 +1,46 @@
+go-msmpeg4 — pure-Go Microsoft MPEG-4 (v1/v2/v3, DIV3/MP42/…) decoder
+Copyright (c) 2026 Oleksandr Zhabotynskyi
+
+PURPOSE — EDUCATIONAL / RESEARCH (WORK IN PROGRESS)
+--------------------------------------------------
+This is an educational and research project, with two goals:
+
+  1. A clean-room reverse-engineering study of an old, undocumented video format.
+  2. A study of how Large Language Models (LLMs) perform at programming and
+     reverse-engineering hard, open-ended problems — much of the work here was
+     produced by an LLM, and the dead-ends are kept on purpose as part of the record.
+
+It is NOT a production decoder and does not yet decode real-encoder DIV3 files
+correctly (see README). For a working MS-MPEG4 / DIV3 decoder use instead:
+
+  * FFmpeg (GPL/LGPL) — https://ffmpeg.org/  ·  https://github.com/FFmpeg/FFmpeg
+  * Microsoft's original codec (mpg4c32.dll / Windows Media MPEG-4 V3).
+
+This package decodes only and cannot encode MS-MPEG4.
+
+PROVENANCE OF THE COMMITTED TABLES
+----------------------------------
+The Microsoft MPEG-4 bitstream format is undocumented. The VLC tables, escape
+coding, quantisation, scan and prediction rules COMMITTED in this package were
+derived by BLACK-BOX reverse engineering of the bitstream:
+
+  * The ffmpeg ENCODER was fed controlled pixel blocks and the resulting bits were
+    observed; the ffmpeg DECODER was used only as a pixel oracle.
+  * For the undocumented `ac_pred=1` quirk (which the ffmpeg encoder cannot emit),
+    the original MS codec (DivX 3.11 / mpg4c32.dll) was RUN as a black box — never
+    disassembled or decompiled.
+  * No FFmpeg (or other library) SOURCE CODE is copied into this package. The
+    committed tables (`re/data/*.json`, the Go `*_table.go` files) are regenerated
+    from crafted bitstreams by the `re/` scripts. FFmpeg's msmpeg4 code is LGPL and
+    is not the basis for the committed tables.
+
+  Honesty note: during the (still incomplete) investigation the FFmpeg source and
+  the open standards below were also consulted as references to understand the
+  format. That informed the analysis, but no code or table data was copied in.
+
+Standard, openly-published references used:
+  * ITU-T H.263
+  * ISO/IEC 14496-2 (MPEG-4 Part 2)
+
+The reproducible derivation is documented in `re/NOTES.md`, and the generator
+scripts in `re/` regenerate each table from crafted bitstreams as evidence.

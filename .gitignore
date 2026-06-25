@@ -1,0 +1,45 @@
+# --- Go ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/go-msmpeg4
+/bin/
+vendor/
+
+# --- Python tooling (re/) ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# --- reverse-engineering scratch / generated artifacts ---
+# (the derived tables live in re/data/*.json and ARE committed — keep those)
+*.pkl
+*.png
+*.jpg
+*.avi
+*.yuv
+*.gray
+*.vdscript
+re/s.bin
+re/s.avi
+re/s.yuv
+/tmp/
+
+# --- OS / editor ---
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# local test media symlink (-> ~/Movies/tests, not committed)
+/testdata
