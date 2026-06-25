@@ -17,20 +17,20 @@ import (
 //	[1]  mv_table_index
 func DecodePFrame(data []byte, ref *image.YCbCr, w, h int) (*image.YCbCr, error) {
 	r := newBitReader(data)
-	r.u(2)                   // picture coding type (01)
-	q := r.u(5)              // quantizer
+	r.u(2)      // picture coding type (01)
+	q := r.u(5) // quantizer
 	if q == 0 {
 		return nil, errDecode
 	}
 	useMBSkip := r.bit() == 1
-	rcIdx := r.c3()           // rl_table_index (covers luma+chroma+inter in P-frames)
-	dcIdx := r.bit()          // dc_table_index
-	mvIdx := r.bit()          // mv_table_index
+	rcIdx := r.c3()  // rl_table_index (covers luma+chroma+inter in P-frames)
+	dcIdx := r.bit() // dc_table_index
+	mvIdx := r.bit() // mv_table_index
 
 	// In P-frames, rcIdx selects the RL table for all block types:
 	// inter and intra-chroma use chromaTCOEF[rcIdx], intra-luma uses lumaTCOEF[rcIdx].
-	tcSet := chromaTCOEF[rcIdx]  // inter + intra chroma
-	lumaSet := lumaTCOEF[rcIdx]  // intra luma
+	tcSet := chromaTCOEF[rcIdx] // inter + intra chroma
+	lumaSet := lumaTCOEF[rcIdx] // intra luma
 	if tcSet == nil || lumaSet == nil {
 		return nil, errUnsupportedConfig
 	}
@@ -144,8 +144,11 @@ func DecodePFrame(data []byte, ref *image.YCbCr, w, h int) (*image.YCbCr, error)
 					refY, refCb, refCr = ref.Y, ref.Cb, ref.Cr
 					refYStride, refCStride = ref.YStride, ref.CStride
 				} else {
-					refY = yPlane; refYStride = cw
-					refCb = cbPlane; refCr = crPlane; refCStride = cw / 2
+					refY = yPlane
+					refYStride = cw
+					refCb = cbPlane
+					refCr = crPlane
+					refCStride = cw / 2
 					refW, refH = cw, ch
 					refCW, refCH = cw/2, ch/2
 				}
@@ -163,24 +166,24 @@ func DecodePFrame(data []byte, ref *image.YCbCr, w, h int) (*image.YCbCr, error)
 						// Luma: block origin in luma pixels.
 						r0 := my*16 + (blk/2)*8
 						c0 := mx*16 + (blk%2)*8
-						mcFill(mcBuf[:], refY, refYStride, refW, refH, r0, c0, mvx, mvy)
+						mcFill(mcBuf[:], refY, refYStride, refW, refH, r0, c0, mvx, mvy, false)
 					} else {
 						// Chroma: block origin in chroma pixels.
 						r0 := my * 8
 						c0 := mx * 8
 						if blk == 4 {
-							mcFill(mcBuf[:], refCb, refCStride, refCW, refCH, r0, c0, cmvx, cmvy)
+							mcFill(mcBuf[:], refCb, refCStride, refCW, refCH, r0, c0, cmvx, cmvy, false)
 						} else {
-							mcFill(mcBuf[:], refCr, refCStride, refCW, refCH, r0, c0, cmvx, cmvy)
+							mcFill(mcBuf[:], refCr, refCStride, refCW, refCH, r0, c0, cmvx, cmvy, false)
 						}
 					}
 
 					if coded {
-						coeff, ok := r.decodeInterBlock(q, tcSet)
+						coeff, ok := r.decodeInterBlock(q, tcSet, 1)
 						if !ok {
 							return nil, errDecode
 						}
-						residual := idct8(&coeff)
+						residual := simpleResidual(&coeff)
 						var px [64]float64
 						for i, v := range mcBuf {
 							px[i] = residual[i] + float64(v)
@@ -252,7 +255,7 @@ func DecodePFrame(data []byte, ref *image.YCbCr, w, h int) (*image.YCbCr, error)
 								if n >= 64 {
 									return nil, errDecode
 								}
-								c, ok := r.decodeTCOEF(ts)
+								c, ok := r.decodeTCOEF(ts, 0)
 								if !ok {
 									return nil, errDecode
 								}
@@ -301,7 +304,7 @@ func DecodePFrame(data []byte, ref *image.YCbCr, w, h int) (*image.YCbCr, error)
 							coeff[i] = dequantAC(qf[i], q)
 						}
 					}
-					px := idct8(&coeff)
+					px := simpleResidual(&coeff)
 					writeBlock(blk, mx, my, cw, px, yPlane, cbPlane, crPlane)
 				}
 			}
@@ -339,7 +342,12 @@ func halfPix(v int) (ip, frac int) {
 // mcFill fills dst[0..63] with the motion-compensated prediction for one 8×8 block.
 // src is the reference plane (stride × height), blockR/C is the block origin in
 // the plane, dvx/dvy is the motion vector in half-pixel units of that plane.
-func mcFill(dst []int, src []byte, stride, planeW, planeH, blockR, blockC, dvx, dvy int) {
+// noRound selects truncated half-pel averaging (MS no_rounding) instead of the +1 rounded form.
+func mcFill(dst []int, src []byte, stride, planeW, planeH, blockR, blockC, dvx, dvy int, noRound bool) {
+	r2, r4 := 1, 2
+	if noRound {
+		r2, r4 = 0, 1
+	}
 	ix, fx := halfPix(dvx)
 	iy, fy := halfPix(dvy)
 
@@ -376,11 +384,11 @@ func mcFill(dst []int, src []byte, stride, planeW, planeH, blockR, blockC, dvx, 
 			d := int(src[clampR(blockR+i+iy+1)*stride+clampC(blockC+j+ix+1)])
 			switch {
 			case fx == 1 && fy == 0:
-				dst[i*8+j] = (a + b + 1) >> 1
+				dst[i*8+j] = (a + b + r2) >> 1
 			case fx == 0 && fy == 1:
-				dst[i*8+j] = (a + c + 1) >> 1
+				dst[i*8+j] = (a + c + r2) >> 1
 			default: // fx==1 && fy==1
-				dst[i*8+j] = (a + b + c + d + 2) >> 2
+				dst[i*8+j] = (a + b + c + d + r4) >> 2
 			}
 		}
 	}
@@ -388,14 +396,14 @@ func mcFill(dst []int, src []byte, stride, planeW, planeH, blockR, blockC, dvx, 
 
 // decodeInterBlock decodes one 8×8 inter block (all 64 coefficients as TCOEF)
 // and returns dequantised floating-point coefficients in raster order.
-func (r *bitReader) decodeInterBlock(q int, t *tcoefTableSet) ([64]float64, bool) {
+func (r *bitReader) decodeInterBlock(q int, t *tcoefTableSet, runDiff int) ([64]float64, bool) {
 	var qf [64]int
 	pos := 0
 	for n := 0; ; n++ {
 		if n >= 64 {
 			return [64]float64{}, false
 		}
-		c, ok := r.decodeTCOEF(t)
+		c, ok := r.decodeTCOEF(t, runDiff)
 		if !ok {
 			return [64]float64{}, false
 		}

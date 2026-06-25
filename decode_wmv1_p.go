@@ -36,7 +36,7 @@ func (r *bitReader) decodeInterBlockWMV1(q int, t *tcoefTableSet, st *esc3State,
 // bitRate is the value from the preceding I-frame's ext-header (decides per_mb_rl_table).
 func DecodePFrameWMV1(data []byte, ref *image.YCbCr, w, h, bitRate int) (*image.YCbCr, error) {
 	r := newBitReader(data)
-	r.u(2)      // picture coding type (01 = inter)
+	r.u(2) // picture coding type (01 = inter)
 	q := r.u(5)
 	if q == 0 || q > 31 {
 		return nil, errDecode
@@ -49,7 +49,7 @@ func DecodePFrameWMV1(data []byte, ref *image.YCbCr, w, h, bitRate int) (*image.
 	if perMBRL != 0 {
 		return nil, errUnsupportedConfig
 	}
-	rcIdx := r.c3()    // rl_table_index (luma + chroma + inter)
+	rcIdx := r.c3() // rl_table_index (luma + chroma + inter)
 	dcIdx := r.bit()
 	mvIdx := r.bit()
 
@@ -156,14 +156,14 @@ func DecodePFrameWMV1(data []byte, ref *image.YCbCr, w, h, bitRate int) (*image.
 					if blk < 4 {
 						r0 := my*16 + (blk/2)*8
 						c0 := mx*16 + (blk%2)*8
-						mcFill(mcBuf[:], refY, refYStride, refW, refH, r0, c0, mvx, mvy)
+						mcFill(mcBuf[:], refY, refYStride, refW, refH, r0, c0, mvx, mvy, false)
 					} else {
 						r0 := my * 8
 						c0 := mx * 8
 						if blk == 4 {
-							mcFill(mcBuf[:], refCb, refCStride, refCW, refCH, r0, c0, cmvx, cmvy)
+							mcFill(mcBuf[:], refCb, refCStride, refCW, refCH, r0, c0, cmvx, cmvy, false)
 						} else {
-							mcFill(mcBuf[:], refCr, refCStride, refCW, refCH, r0, c0, cmvx, cmvy)
+							mcFill(mcBuf[:], refCr, refCStride, refCW, refCH, r0, c0, cmvx, cmvy, false)
 						}
 					}
 					if coded {
@@ -172,7 +172,7 @@ func DecodePFrameWMV1(data []byte, ref *image.YCbCr, w, h, bitRate int) (*image.
 						if !ok {
 							return nil, errDecode
 						}
-						residual := idct8(&coeff)
+						residual := simpleResidual(&coeff)
 						var px [64]float64
 						for i, v := range mcBuf {
 							px[i] = residual[i] + float64(v)
@@ -284,7 +284,7 @@ func DecodePFrameWMV1(data []byte, ref *image.YCbCr, w, h, bitRate int) (*image.
 							coeff[i] = dequantAC(qf[i], q)
 						}
 					}
-					px := idct8(&coeff)
+					px := simpleResidual(&coeff)
 					writeBlock(blk, mx, my, cw, px, yPlane, cbPlane, crPlane)
 				}
 			}

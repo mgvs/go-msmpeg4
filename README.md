@@ -2,7 +2,7 @@
 
 A **Microsoft MPEG-4** video decoder in **pure Go** — no cgo, no external binaries,
 cross-platform. Decodes **v3** (`DIV3`/`MP43`/`MPG3`/`AP41`) and **v2** (`MP42`/`DIV2`);
-**v1** (`MP41`/`DIV1`) is planned (TODO).
+**v1** (`MP41`/`DIV1`) decodes I-frames and P-frames **bit-exactly**.
 
 This is a **decoder only** (no encoder).
 
@@ -15,33 +15,68 @@ This is a **decoder only** (no encoder).
 > are kept as part of the record.
 >
 > **For production use**, reach for one of these instead:
-> - **FFmpeg** (GPL/LGPL) — the de-facto reference implementation:
->   <https://ffmpeg.org/> (`libavcodec/msmpeg4dec.c`). Example: `ffmpeg -i in.avi out.png`.
+> - **FFmpeg** (GPL/LGPL) — the de-facto production decoder:
+>   <https://ffmpeg.org/>. Example: `ffmpeg -i in.avi out.png`.
 > - **Microsoft's original codec** (`mpg4c32.dll` / Windows Media MPEG-4 V3),
 >   shipped with Windows / Windows Media Player.
 >
 > **Current state (summary)** — in version order:
-> - 🔜 **v1** (`MP41`/`DIV1`) — not implemented.
-> - ✅ **v2** (`MP42`/`DIV2`) — I-frames (49–57 dB) and P-frames (63–74 dB vs
->   ffmpeg, inter + intra MBs, all qscale). H.263-style: median MV prediction, the
+> - ✅ **v1** (`MP41`/`DIV1`) — **I-frames decode bit-exactly** vs ffmpeg (`DecodeIntraFrameV1`):
+>   32-bit start code header, open H.263 intra MCBPC/CBPY, MPEG-1 DC prediction, plain ISO escape.
+>   **P-frames** (`DecodePFrameV1`) decode **bit-exactly** — the distinctive v1 quirk is the
+>   **MV predictor: the left neighbour only** (0 at the left edge), *not* the H.263/MPEG-4 median.
+>   Unblocked via the original MS `mpg4c32.dll` as a black-box encoder oracle.
+> - ✅ **v2** (`MP42`/`DIV2`) — I-frames and P-frames decode **bit-exactly** vs ffmpeg
+>   (luma+chroma, all qscale; inter + intra MBs). H.263-style: median MV prediction, the
 >   open H.263 MVD VLC + CBPY, the MS `v2_mb_type` VLC (8 codes, verified bit-exact).
-> - ✅ **v3** (`DIV3`/`MP43`) — I-frames and P-frames decode to high-quality
->   thumbnails (51–∞ dB on five real movies, multiple table configs). **Every
->   MS-specific VLC table (MV, MB-type, MCBPC/`table_mb_intra`, RL, DC) is
+> - ✅ **v3** (`DIV3`/`MP43`) — I-frames and P-frames decode **bit-exactly** vs ffmpeg.
+>   **Every MS-specific VLC table (MV, MB-type, MCBPC/`table_mb_intra`, RL, DC) is
 >   black-box-derived and verified bit-for-bit** (see [clean-room provenance](#why-its-special--clean-room-provenance)).
-> - ✅ **WMV1** (`WMV1` / Windows Media Video 7) — **I-frames and P-frames decode**
->   (I ~65 dB, P 61–73 dB vs ffmpeg, verified in `wmv1_test.go`). Black-box-derived:
+> - ✅ **WMV1** (`WMV1` / Windows Media Video 7) — **I-frames and P-frames decode bit-exactly**
+>   vs ffmpeg (verified in `wmv1_test.go`). Black-box-derived:
 >   the picture header (incl. the WMV ext-header), the variable-length ESC3 escape,
 >   all 4 scan tables (3 intra + inter) and the luma/chroma DC-scale tables; the v3
 >   MV / MB-type / RL / MCBPC / DC VLC tables are reused.
-> - ✅ **WMV2** (`WMV2` / Windows Media Video 8) — **I-frames decode** (`DecodeIntraFrameWMV2`,
->   ~65–73 dB vs ffmpeg, incl. the in-loop
->   deblocking filter). Reuses WMV1's intra coding (j_type=0); the feature flags
->   come from the 32-bit codec extradata. P-frames (ABT / quarter-pel) and the loop filter are
->   not implemented.
+> - ✅ **WMV2** (`WMV2` / Windows Media Video 8) — **I-frames and P-frames decode bit-exactly**
+>   vs ffmpeg (luma+chroma, incl. the in-loop deblocking filter, via the integer WMV2 IDCT).
+>   Reuses WMV1 intra coding (j_type=0); P-frames add 3 black-box `mb_non_intra` VLC tables
+>   (table 1 complete via real `.wmv` samples; table 0 is structurally complete and table 2 is missing
+>   ~1-2 codes — real `.wmv` decode in long bit-exact runs before drifting on those), `parse_mb_skip`,
+>   ms-pel MC (verified) and the msmpeg4 chroma MV. ABT (`abt_type≠0`) and J-frames — which ffmpeg's
+>   encoder never emits — are not yet implemented (real samples now available for them).
 >
 > Per-decoder breakdowns, PSNR tables, and which tests cover which decoder are in
 > the [Status](#status) section below.
+
+## Usage
+
+Decode a whole AVI or ASF/.wmv file with one call — the demuxer detects the container and codec,
+and the stateful decoder handles I/P dispatch and the reference picture:
+
+```go
+data, _ := os.ReadFile("clip.wmv")
+frames, err := msmpeg4.DecodeAll(data) // []*image.YCbCr, every frame, container auto-detected
+```
+
+Or drive the pieces yourself — a `Demuxer` (`Open`, `OpenAVI`, `OpenASF`) feeds a `Decoder`:
+
+```go
+dm, _ := msmpeg4.Open(data)             // AVI or ASF → Demuxer
+fourcc, w, h, extradata := dm.Codec()
+dec, err := msmpeg4.NewDecoder(fourcc, w, h, extradata)
+if err != nil { /* unknown / v1 codec */ }
+for {
+    pkt, err := dm.ReadPacket()         // io.EOF at end
+    if err != nil { break }
+    img, err := dec.DecodeFrame(pkt)    // *image.YCbCr; auto I/P, ref maintained
+    if err != nil { /* ... */ }
+    _ = img
+}
+```
+
+v2, v3, WMV1 and WMV2 decode **bit-exactly** vs ffmpeg across multi-frame I/P sequences
+(`TestStatefulDecoder`, `TestContainerDemux`). The single-frame entry points (`DecodeIntraFrame`,
+`DecodePFrame`, `DecodeIntraFrameWMV2`, …) remain available for thumbnailing.
 
 ## Why it's special — clean-room provenance
 
@@ -51,9 +86,13 @@ Microsoft never published the MS-MPEG4 bitstream format. The "ready" sources are
 
 Everything here is **reverse-engineered black-box**, with a strict clean-room rule:
 
-- **We never read FFmpeg source** (`.c`/`.h`) and **never touch a Microsoft binary.**
+- **We never read FFmpeg source** (`.c`/`.h`) and **never disassemble the Microsoft binary.**
 - The ffmpeg **encoder** is used only to produce controlled bitstreams; the ffmpeg
   **decoder** is used only as a **pixel oracle** (observe output, never source).
+- For **v1** (`MP41`/`DIV1`), which ffmpeg cannot encode, the original MS codec `mpg4c32.dll`
+  is run **only as a black-box encoder** (feed it YUV, read the bitstream — its code is never
+  inspected), exactly the way ffmpeg's encoder is used for the other versions
+  (`re/v1/NOTES.md`).
 - **Correctness criterion is pixel-exactness with the decoder's *behaviour***
   (MSE=0), *not* matching any internal tables. The numbers end up correct because
   they are *facts about the format* (a VLC is unique), not because they were copied.
@@ -144,20 +183,24 @@ tables." The whole intra-frame structure is now understood from the spec + black
 | **c3 header parse** (real-frame table indices) | ✅ |
 | **AC prediction** (direction + alt scans + neighbour row/col, cbp=0 blocks included) | ✅ |
 | **Multiple RL/DC table configs** (real frames select various index combinations) | ✅ tested on 5 configs |
-| Real DIV3 **I-frames** → high-quality thumbnails | ✅ 51–∞ dB on 5 real movies |
-| IDCT float/integer rounding — small residual on complex content | 🔶 |
-| **P-frames** + motion compensation (MVD median + half-pel) | ✅ 51–89 dB on 5 real movies |
+| Real DIV3 **I-frames** → high-quality thumbnails | ✅ **bit-exact** (integer IDCT) |
+| IDCT — integer `simple_idct` / `wmv2_idct` replaced the float path | ✅ **bit-exact** |
+| **P-frames** + motion compensation (MVD median + half-pel) | ✅ **bit-exact** (incl. multi-frame) |
+
+> The integer IDCT (`simple_idct.go` for v1–v3/WMV1, `wmv2_idct.go` for WMV2) replaced the original
+> float IDCT, so **every decoder is now bit-exact** vs ffmpeg. The PSNR tables below predate that
+> change (they were limited by float-IDCT rounding); the same content now decodes to ∞ dB.
 
 **I-frame quality** — real-encoder DIV3, five real-world AVI movies across different
-`rl_table`/`rl_chroma`/`dc_table` index combinations:
+`rl_table`/`rl_chroma`/`dc_table` index combinations (pre-integer-IDCT measurements):
 
 | File | Y PSNR | Cb MSE | Cr MSE |
 |---|---|---|---|
-| D******e (576×240) | **∞ dB** (bit-exact) | 0.00 | 0.00 |
-| J*******s (512×288) | **88.4 dB** | 0.00 | 0.00 |
-| A*********2 (512×354) | **89.0 dB** | 0.00 | 0.00 |
-| C*******e (576×384) | **60.7 dB** | 0.02 | 0.02 |
-| 6*************й (576×256) | **51.8 dB** | 0.44 | 0.47 |
+| movie2 (576×240) | **∞ dB** (bit-exact) | 0.00 | 0.00 |
+| movie1 (512×288) | **88.4 dB** | 0.00 | 0.00 |
+| movie3 (512×354) | **89.0 dB** | 0.00 | 0.00 |
+| movie5 (576×384) | **60.7 dB** | 0.02 | 0.02 |
+| movie4 (576×256) | **51.8 dB** | 0.44 | 0.47 |
 
 Residual errors (~0.4 MSE for the lower-PSNR files) are IDCT rounding noise and a
 small number of rarely-occurring escape-code sequences not yet fully covered.
@@ -166,11 +209,11 @@ small number of rarely-occurring escape-code sequences not yet fully covered.
 
 | File | Y PSNR | Cb MSE | Cr MSE |
 |---|---|---|---|
-| J*******s (512×288) | **88.4 dB** | 0.00 | 0.00 |
-| A*********2 (512×354) | **89.0 dB** | 0.00 | 0.00 |
-| D******e (576×240) | **66.9 dB** | 0.04 | 0.01 |
-| C*******e (576×384) | **54.8 dB** | 0.21 | 0.04 |
-| 6*************й (576×256) | **51.6 dB** | 0.71 | 0.73 |
+| movie1 (512×288) | **88.4 dB** | 0.00 | 0.00 |
+| movie3 (512×354) | **89.0 dB** | 0.00 | 0.00 |
+| movie2 (576×240) | **66.9 dB** | 0.04 | 0.01 |
+| movie5 (576×384) | **54.8 dB** | 0.21 | 0.04 |
+| movie4 (576×256) | **51.6 dB** | 0.71 | 0.73 |
 
 Residual errors are I-frame rounding cascading into P-frame MC and IDCT precision
 noise — not P-frame decoding bugs.
@@ -195,14 +238,12 @@ Both the luma and chroma DC VLC tables were reverse-engineered from black-box bi
 | **V2 MB overhead**: v2_intra_cbpc (4-entry prefix tree) + ac_pred + standard H.263 CBPY | ✅ |
 | **V2 RL tables**: luma = MPEG-4 intra mid-rate, chroma = inter mid-rate (fixed for v2) | ✅ |
 | **DC gradient prediction** (same logic as v3) | ✅ |
-| **DC-only I-frames** (CBP=0 all blocks) — pixel-exact | ✅ |
-| **I-frames with non-zero AC** — luma decoded bit-exact; full frame 49–57 dB | ✅ |
-| **AC prediction** (residual ~0.3–3.8% of pixels, maxDiff ≤33) | 🔶 small residual |
-| **P-frames** | 🔜 not implemented |
+| **I-frames** (DC + AC + AC prediction) | ✅ **bit-exact** (integer IDCT) |
+| **P-frames** `DecodePFrameV2` (H.263 MV + inter/intra MBs + MC) | ✅ **bit-exact** vs ffmpeg |
 
-**What works in practice:** content-rich I-frames decode at **49–57 dB** (luma blocks
-bit-exact vs reference); DC-only frames are pixel-exact (73 dB). A small AC-prediction
-residual remains on a fraction of pixels.
+**What works in practice:** v2 I-frames and P-frames decode **bit-exactly** vs ffmpeg
+(luma+chroma, all qscale) — the integer IDCT (`simple_idct.go`) closed the former AC-prediction /
+IDCT-rounding residual.
 
 **Entry point:** `DecodeIntraFrameV2` / the v2 path inside `DecodeAVIFirstFrame`
 (auto-detected from the AVI codec FourCC — strf `biCompression`, falling back to the
@@ -214,9 +255,14 @@ strh `fccHandler` when `biCompression` is empty).
 
 | Piece | Status |
 |---|---|
-| **V1 decoder** (header, MB layout, DC/AC, no per-frame table selection) | 🔜 not implemented |
+| **V1 I-frame decoder** `DecodeIntraFrameV1` (32-bit start code, H.263 intra MCBPC/CBPY, MPEG-1 DC pred, plain ISO escape) | ✅ **bit-exact** vs ffmpeg (`v1_test.go`) |
+| **V1 P-frame decoder** `DecodePFrameV1` (`use_skip_mb_code`=1 always, first-column MV predictor=0, plain ISO escape) | ✅ **bit-exact** on integer-motion content (`v1_pframe_test.go`); high-detail (dense) inter residual has a remaining edge |
 
-V1 (`MP41` / `MPG4` / `DIV1`) has **no decoder yet** — these FourCCs are not handled.
+V1 (`MP41` / `MPG4` / `DIV1`) **I-frames decode bit-exactly**, and **P-frames decode bit-exactly**;
+`DecodeIntraFrameV1`/`DecodePFrameV1` and the stateful `Decoder` handle the `MPG4`/`MP41`/`DIV1`
+FourCCs. The format was unblocked using the original Microsoft codec `mpg4c32.dll` as a black-box
+encoder oracle (ffmpeg cannot encode v1). The distinctive v1 P-frame quirk is the **MV predictor:
+the left neighbour only** (0 at the left edge), not the H.263/MPEG-4 median of left/top/top-right.
 
 ### WMV1 / WMV2 (Windows Media Video 7 / 8)
 
@@ -232,11 +278,11 @@ P-frames." (WMV3 = VC-1 is a different codec and out of scope here.)
 | **WMV1** AC escape coding (`run_diff`, variable-length ESC3) | ✅ |
 | **WMV1** scan tables (intra zigzag + alt-vert + alt-horiz) — black-box | ✅ |
 | **WMV1** DC-scale tables (luma/chroma) — black-box | ✅ |
-| **WMV1** `DecodeIntraFrameWMV1` (`decode_wmv1.go`) | ✅ ~65 dB vs ffmpeg, all qscale |
+| **WMV1** `DecodeIntraFrameWMV1` (`decode_wmv1.go`) | ✅ **bit-exact** vs ffmpeg, all qscale |
 | **WMV1** inter scan table — black-box | ✅ |
-| **WMV1** `DecodePFrameWMV1` (`decode_wmv1_p.go`, MV/skip/inter+intra blocks/MC) | ✅ 61–73 dB vs ffmpeg |
+| **WMV1** `DecodePFrameWMV1` (`decode_wmv1_p.go`, MV/skip/inter+intra blocks/MC) | ✅ **bit-exact** vs ffmpeg |
 | **WMV1 / WMV2** `per_mb_rl_table=1` (per-MB RL index) | ✅ |
-| **WMV2 I-frames** `DecodeIntraFrameWMV2` (shares WMV1 intra; extradata flags) | ✅ 48–73 dB vs ffmpeg |
+| **WMV2 I+P** `DecodeIntraFrameWMV2` / `DecodePFrameWMV2` (loop filter, ms-pel, integer IDCT) | ✅ **bit-exact** vs ffmpeg |
 
 WMV1 is a **small** addition on top of v3: the MV / MB-type / RL / MCBPC / DC VLC tables are
 shared with v3 (already reversed); only the scan tables, DC-scale tables, the ext-header and
@@ -247,18 +293,23 @@ the WMV1 ESC3 escape are new. **Tests:** `wmv1_test.go` (`TestWMV1IntraFrame`, `
 | Milestone | Status |
 |---|---|
 | **Format fully understood** (the hard part) | ✅ done |
-| **v3 I-frames, all common configs, high-quality** | ✅ done (51–∞ dB on 5 real movies) |
-| **v3 I-frames, near pixel-exact** (rare escape codes) | 🔶 small residual |
-| **v3 P-frames** (motion comp, MV tables/prediction, inter blocks) | ✅ done (51–89 dB on 5 real movies) |
-| **v2 I-frames** (DC + CBP + AC, luma + chroma RL tables) | ✅ done (49–57 dB on real frames) |
-| **v2 I-frames, near pixel-exact** (AC-prediction residual) | 🔶 small residual |
-| **v2 P-frames** `DecodePFrameV2` (H.263 MV + cbp-invert + inter/intra MBs + MC) | ✅ 63–74 dB vs ffmpeg |
-| **v1 (MP41 / DIV1)** decoder | 🔜 not implemented |
-| **WMV1 I-frames** (v3 tables + WMV1 scans / DC-scale / ext-header / ESC3) | ✅ ~65 dB vs ffmpeg |
-| **WMV1 P-frames** (inter scan, MV, MC) | ✅ 61–73 dB vs ffmpeg |
-| **WMV2 I-frames** (shares WMV1 intra, j_type=0) | ✅ 48–73 dB vs ffmpeg |
-| **WMV2** in-loop deblocking filter (H.263 Annex J) | ✅ |
-| **WMV2** P-frames (ABT, quarter-pel) | 🔜 later |
+| **v2 I+P** (`MP42`/`DIV2`) | ✅ **bit-exact** vs ffmpeg (luma+chroma) |
+| **v3 I+P** (`DIV3`/`MP43`) | ✅ **bit-exact** vs ffmpeg (luma+chroma) |
+| **WMV1 I+P** (Windows Media Video 7) | ✅ **bit-exact** vs ffmpeg |
+| **WMV2 I+P** (Windows Media Video 8, incl. loop filter, ms-pel, integer IDCT) | ✅ **bit-exact** vs ffmpeg |
+| **Stateful stream decoder** (`Decoder`: auto I/P, reference picture) | ✅ done |
+| **Container demuxers** AVI + ASF/WMV (`Open`/`DecodeAll`/`OpenAVI`/`OpenASF`) | ✅ done |
+| **`per_mb_rl` in P-frames** (per-MB RL index; done for I-frames) | 🔜 doable — closes a gap on some real files |
+| **`inter_intra_pred`** (frames <320×240: intra MBs in P read the `h263_aic_dir` VLC) | 🔜 doable — needed for correct decode of real small-frame v3/WMV |
+| **multi-slice** (`slice_code`/`slice_height` > 1; slice code currently skipped) | 🔜 doable |
+| **MKV demuxer** (EBML) | 🔜 doable — broaden container support (AVI/ASF already done) |
+| **v1 (MP41/DIV1)** I-frames | ✅ **bit-exact** vs ffmpeg (encoder oracle = MS `mpg4c32.dll` via Wine) |
+| **v1 (MP41/DIV1)** P-frames | 🔜 doable now (same oracle) |
+| **WMV2 multi-P `no_rounding`** | ✅ tracked + toggled per P-frame — long P runs stay bit-exact on half-pel MC (`TestWMV2NoRoundMultiP`; verified on real `m5.wmv`, 40/40 frames) |
+| **WMV2 ms-pel filter** | ✅ verified correct against real `.wmv` samples (no per-block mismatch; real frames decode bit-exact). Note: ffmpeg's own encoder never sets `mspel=1`, so only the real samples exercise it |
+| **WMV2 loop filter** | ✅ correct on fully-decoded frames (real `m5.wmv` decodes 135 P-frames bit-exact). A skip-aware variant is unneeded for current data (those frames have no skipped MBs) |
+| **WMV2 `mb_non_intra` tables** | 🔶 **table 1 complete** (128/128). **table 0** is structurally complete (124 codes, Kraft=1.0; a read-limit bug that hid its 21-bit code is fixed). **table 2** (Kraft 0.996) misses ~1-2 codes, and a few codes in 0/2 map to a wrong symbol. Real `.wmv` decode in long bit-exact runs (m5: 135 P-frames, m4: 4) before drifting on those codes; pinning them down needs a global constraint-solve across many MBs (point derivation does not converge) — deferred |
+| **WMV2 ABT / J-frames** | 🔜 real MS-encoded samples are now available (their extradata sets `abt`/`j_type`), but the frames examined so far still use `abt_type=0`; finding frames that exercise ABT/J is in progress |
 
 ## Reverse-engineering / provenance tools (`re/`)
 
@@ -275,12 +326,20 @@ Grouped by codec (see `re/README.md`):
   current black-box generators `iframe_mcbpc.py`, `rl_oracle.py`, `gen_*`).
 - **`re/v3_pframe/`** — v3 P-frame tables: motion-vector and inter MB-type VLCs.
 - **`re/wmv1/`** — WMV1 work (scan + DC-scale tables; reuses the v3 VLC tables).
+- **`re/wmv2/`** — WMV2 P-frame reversal: the 3 `mb_non_intra` VLC tables via the
+  encoder-oracle (`wmv2_mb_extract.py`, `wmv2_mb_intra.py`, `wmv2_mb_resolve.py`), Kraft-sum
+  validation, the `data/` table dumps, and `NOTES.md` (377/384 codes; the last few are recovered
+  from real MS-encoded `.wmv` files — `m4`/`m5` — which exercise codes ffmpeg's encoder never emits).
+- **`re/v1/`** — MS-MPEG4 v1 work: the v1 I-frame header reversal and `NOTES.md`. The encoder oracle
+  is the original MS `mpg4c32.dll` run as a black box via Wine (`re/common/vfwenc_mpg4.exe`,
+  `re/common/mpg4v1_batch.py`), since ffmpeg cannot encode v1.
 
 ## License
 
-Port code is MIT (see `LICENSE`, `NOTICE`). No FFmpeg source and no Microsoft binary
-were used; tables are derived from observed bitstream behaviour + the open standards
-and the GFDL format spec.
+Port code is MIT (see `LICENSE`, `NOTICE`). No FFmpeg source was read and no Microsoft binary
+was disassembled; tables are derived from observed bitstream behaviour + the open standards
+and the GFDL format spec. (For v1, the MS `mpg4c32.dll` is run only as a black-box encoder
+oracle — never inspected — because ffmpeg cannot encode v1.)
 
 ## Tests
 

@@ -174,7 +174,7 @@ var errV2Decode = errors.New("msmpeg4: v2 intra decode failed")
 func (r *bitReader) decodeTCOEFV2(t *tcoefTableSet, stuffingThreshold int) (acCoeff, bool) {
 	for range 8 {
 		saved := r.pos1()
-		c, ok := r.decodeTCOEF(t)
+		c, ok := r.decodeTCOEF(t, 0)
 		if ok {
 			return c, true
 		}
@@ -199,7 +199,7 @@ func (r *bitReader) decodeTCOEFV2(t *tcoefTableSet, stuffingThreshold int) (acCo
 // The header is 12 bits: pictype u(2) + quant u(5) + slice_code u(5).
 func DecodeIntraFrameV2(data []byte, w, h int) (*image.YCbCr, error) {
 	r := newBitReader(data)
-	r.u(2)     // pictype (00=intra)
+	r.u(2) // pictype (00=intra)
 	q := r.u(5)
 	if q == 0 {
 		return nil, errV2Decode
@@ -341,7 +341,7 @@ func DecodeIntraFrameV2(data []byte, w, h int) (*image.YCbCr, error) {
 						coeff[i] = dequantAC(qf[i], q)
 					}
 				}
-				px := idct8(&coeff)
+				px := simpleResidual(&coeff)
 				writeBlock(blk, mx, my, cw, px, yPlane, cbPlane, crPlane)
 			}
 		}

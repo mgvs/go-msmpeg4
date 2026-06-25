@@ -111,7 +111,7 @@ func Test6daysPFrameTrace(t *testing.T) {
 						if n >= 64 {
 							t.Fatalf("MB(%d,%d) blk%d TCOEF infinite loop", mx, my, blk)
 						}
-						c, ok := r.decodeTCOEF(tcSet)
+						c, ok := r.decodeTCOEF(tcSet, 0)
 						if !ok {
 							t.Fatalf("MB(%d,%d) blk%d TCOEF FAIL at pos=%d", mx, my, blk, r.pos)
 						}
@@ -145,7 +145,7 @@ func Test6daysPFrameTrace(t *testing.T) {
 							if n >= 64 {
 								t.Fatalf("MB(%d,%d) intra blk%d TCOEF loop", mx, my, blk)
 							}
-							c, ok := r.decodeTCOEF(ts)
+							c, ok := r.decodeTCOEF(ts, 0)
 							if !ok {
 								t.Fatalf("MB(%d,%d) intra blk%d TCOEF FAIL", mx, my, blk)
 							}
@@ -197,7 +197,7 @@ func Test6daysMB21Block0(t *testing.T) {
 
 	// rcIdx=2 → chromaTCOEF[2]
 	tcSet := chromaTCOEF[2]
-	coeff, ok := r.decodeInterBlock(12, tcSet)
+	coeff, ok := r.decodeInterBlock(12, tcSet, 0)
 	t.Logf("decodeInterBlock ok=%v pos_after=%d", ok, r.pos)
 	t.Logf("non-zero coeffs:")
 	for i, v := range coeff {
@@ -249,7 +249,7 @@ func Test6daysMB21Block0Verbose(t *testing.T) {
 	pos := 0
 	for n := 0; n < 20; n++ {
 		startPos := r.pos
-		c, ok := r.decodeTCOEF(tcSet)
+		c, ok := r.decodeTCOEF(tcSet, 0)
 		if !ok {
 			t.Fatalf("TCOEF decode failed at pos=%d", startPos)
 		}

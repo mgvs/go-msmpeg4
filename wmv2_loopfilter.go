@@ -80,7 +80,7 @@ func h263HLoop(p []byte, off, stride, strength int) {
 }
 
 // applyH263LoopFilter deblocks an intra frame (uniform qscale, no skipped MBs) over the padded
-// planes, replicating ff_h263_loop_filter's per-MB edge order so each edge is filtered once.
+// planes, following the H.263 Annex J per-MB edge order so each edge is filtered once.
 func applyH263LoopFilter(y, cb, cr []byte, cw, ch, mbw, mbh, q int) {
 	ls := cw
 	uvls := cw / 2

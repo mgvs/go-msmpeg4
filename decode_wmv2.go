@@ -51,5 +51,5 @@ func DecodeIntraFrameWMV2(data []byte, w, h int, extradata []byte) (*image.YCbCr
 	}
 	dcIdx := r.bit()
 
-	return wmv1IntraBody(r, q, rtIdx, rcIdx, dcIdx, w, h, perMBRL != 0, loopFilter)
+	return wmv1IntraBody(r, q, rtIdx, rcIdx, dcIdx, w, h, perMBRL != 0, loopFilter, wmv2Residual)
 }

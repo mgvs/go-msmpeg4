@@ -66,7 +66,9 @@ type acCoeff struct {
 
 // decodeTCOEF reads one AC coefficient (run, signed level, last) using table set t.
 // ok=false on a malformed stream.
-func (r *bitReader) decodeTCOEF(t *tcoefTableSet) (acCoeff, bool) {
+// decodeTCOEF decodes one AC TCOEF code. runDiff is the version-specific run-escape offset added
+// in the run-escape path: 1 for v3+ inter blocks, 0 for intra blocks and v2.
+func (r *bitReader) decodeTCOEF(t *tcoefTableSet, runDiff int) (acCoeff, bool) {
 	matchDirect := func() (tcoefCode, bool) {
 		code, n := 0, 0
 		for n < tcoefMaxLen {
@@ -101,7 +103,7 @@ func (r *bitReader) decodeTCOEF(t *tcoefTableSet) (acCoeff, bool) {
 			if lvl > 63 {
 				lvl = 63
 			}
-			run := e.run + (*t.maxrun)[e.last][lvl]
+			run := e.run + (*t.maxrun)[e.last][lvl] + runDiff
 			level := e.level
 			if r.bit() == 1 {
 				level = -level

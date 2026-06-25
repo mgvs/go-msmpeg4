@@ -249,7 +249,7 @@ func DecodeIntraFrame(data []byte, w, h int) (*image.YCbCr, error) {
 						if blk >= 4 {
 							ts = chromaSet
 						}
-						c, ok := r.decodeTCOEF(ts)
+						c, ok := r.decodeTCOEF(ts, 0)
 						if !ok {
 							return nil, errDecode
 						}
@@ -302,7 +302,7 @@ func DecodeIntraFrame(data []byte, w, h int) (*image.YCbCr, error) {
 					}
 				}
 
-				px := idct8(&coeff)
+				px := simpleResidual(&coeff)
 				writeBlock(blk, mx, my, cw, px, yPlane, cbPlane, crPlane)
 			}
 		}

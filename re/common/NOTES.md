@@ -628,11 +628,11 @@ verified bit-exact). recon_loop "decoded" real MBs but with junk run/level value
   must be replaced by the clean rl_table2 once complete.
 
 ================================================================================
-## P-FRAME DECODER — Ф2 findings (2026-06-22)
+## P-FRAME DECODER — Phase 2 findings (2026-06-22)
 ================================================================================
 
 The Go P-frame decoder (`pframe.go`) passes pixel comparison tests for 5 real
-DivX3 movies. Key bugs found and fixed during Ф2; all derived from the H.263 spec
+DivX3 movies. Key bugs found and fixed during Phase 2; all derived from the H.263 spec
 (spec/h263v1.pdf) and pixel oracle verification.
 
 ### P-frame header (confirmed on 5 real samples)
@@ -671,7 +671,7 @@ Inter MBs use `chromaTCOEF[rcIdx]`. For typical rcIdx=2 this is the H.263
 inter RL table (`tcoefInterVLC`). Entry format and table same as for intra,
 with a different code assignment. All verified via pixel oracle on all 5 test files.
 
-### Results after Ф2 fixes
+### Results after Phase 2 fixes
 All 5 real DivX3 movies decode P-frame with PSNR > 50 dB vs oracle:
 - Jackasses: 88.4 dB (Y MSE=0.00, maxDiff=1)
 - Dogville:  66.9 dB (Y MSE=0.01, maxDiff=1)

@@ -152,13 +152,13 @@ func DecodeIntraFrameWMV1(data []byte, w, h int) (*image.YCbCr, error) {
 	}
 	dcIdx := r.bit()
 
-	return wmv1IntraBody(r, q, rtIdx, rcIdx, dcIdx, w, h, perMBRL != 0, false)
+	return wmv1IntraBody(r, q, rtIdx, rcIdx, dcIdx, w, h, perMBRL != 0, false, simpleResidual)
 }
 
 // wmv1IntraBody decodes the intra-MB layer shared by WMV1 and WMV2 (j_type=0) I-frames: it sets
 // up the RL/DC/scan/scaler tables from the header indices and decodes every macroblock. The bit
 // reader must be positioned at the start of the first macroblock.
-func wmv1IntraBody(r *bitReader, q, rtIdx, rcIdx, dcIdx, w, h int, perMBRL, loopFilter bool) (*image.YCbCr, error) {
+func wmv1IntraBody(r *bitReader, q, rtIdx, rcIdx, dcIdx, w, h int, perMBRL, loopFilter bool, idct func(*[64]float64) [64]float64) (*image.YCbCr, error) {
 	// When per_mb_rl_table is set the RL table index is read per macroblock (any coded block);
 	// otherwise it comes from the header (rtIdx/rcIdx). Pre-build max-run tables for both.
 	var lumaSets, chromaSets [3]*tcoefTableSet
@@ -342,7 +342,7 @@ func wmv1IntraBody(r *bitReader, q, rtIdx, rcIdx, dcIdx, w, h int, perMBRL, loop
 						coeff[i] = dequantAC(qf[i], q)
 					}
 				}
-				px := idct8(&coeff)
+				px := idct(&coeff)
 				writeBlock(blk, mx, my, cw, px, yPlane, cbPlane, crPlane)
 			}
 		}
